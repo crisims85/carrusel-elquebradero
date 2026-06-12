@@ -1,4 +1,5 @@
 import json, sys, os, requests
+import numpy as np
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -13,13 +14,12 @@ GRIS_OSCURO = "#333333"
 FONT_BOLD = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 FONT_REG  = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
 
-
 def fuente(size):
-    try:    return ImageFont.truetype(FONT_BOLD, size)
+    try: return ImageFont.truetype(FONT_BOLD, size)
     except: return ImageFont.load_default()
 
 def fuente_normal(size):
-    try:    return ImageFont.truetype(FONT_REG, size)
+    try: return ImageFont.truetype(FONT_REG, size)
     except: return ImageFont.load_default()
 
 def wrap(texto, f, draw, max_w):
@@ -27,8 +27,7 @@ def wrap(texto, f, draw, max_w):
     lineas, linea = [], ""
     for p in palabras:
         prueba = linea + " " + p if linea else p
-        if draw.textlength(prueba, font=f) <= max_w:
-            linea = prueba
+        if draw.textlength(prueba, font=f) <= max_w: linea = prueba
         else:
             if linea: lineas.append(linea)
             linea = p
@@ -43,87 +42,43 @@ def pie(draw, num_slide, total):
     ancho_el = draw.textlength("EL ", font=f)
     draw.text((60+ancho_el, y+14), "QUEBRADERO", font=f, fill=ROJO)
 
-def descargar_imagen(img_url):
-    """
-    Descarga img_url y devuelve un objeto PIL.Image en RGB.
-    Lanza excepción con mensaje claro si algo falla.
-    """
-    if not img_url or not isinstance(img_url, str) or not img_url.startswith("http"):
-        raise ValueError(f"imagen_url no válida o ausente: {repr(img_url)}")
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; CarruselBot/1.0)",
-        "Accept": "image/webp,image/jpeg,image/png,image/*,*/*",
-    }
-    r = requests.get(img_url, timeout=15, headers=headers)
-
-    # Falla explícita si el servidor devuelve error HTTP (403, 404, 500…)
-    r.raise_for_status()
-
-    # Verifica que el contenido sea realmente una imagen
-    content_type = r.headers.get("Content-Type", "")
-    if "image" not in content_type:
-        raise ValueError(
-            f"La URL no devolvió una imagen (Content-Type: {content_type}). "
-            f"URL: {img_url}"
-        )
-
-    from io import BytesIO
-    foto = Image.open(BytesIO(r.content)).convert("RGB")
-    return foto
-
 def slide_portada(titulo, categoria, img_url, num, total):
     img = Image.new("RGB", (W, H), BG)
-
     if img_url:
         try:
-            foto = descargar_imagen(img_url)
-
-            ratio = max(W / foto.width, H / foto.height)
-            nw, nh = int(foto.width * ratio), int(foto.height * ratio)
+            r = requests.get(img_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            from io import BytesIO
+            foto = Image.open(BytesIO(r.content)).convert("RGB")
+            ratio = max(W/foto.width, H/foto.height)
+            nw, nh = int(foto.width*ratio), int(foto.height*ratio)
             foto = foto.resize((nw, nh), Image.LANCZOS)
-            x, y = (nw - W) // 2, (nh - H) // 2
-            foto = foto.crop((x, y, x + W, y + H))
+            x, y = (nw-W)//2, (nh-H)//2
+            foto = foto.crop((x, y, x+W, y+H))
 
-            gradiente = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-            for fila in range(H):
-                inicio_gradiente = int(H * 0.40)
-                if fila < inicio_gradiente:
-                    alpha = 0
-                else:
-                    progreso = (fila - inicio_gradiente) / (H - inicio_gradiente)
-                    alpha = int(progreso * 200)
-                for col in range(W):
-                    gradiente.putpixel((col, fila), (0, 0, 0, alpha))
+            # Gradiente vectorizado con numpy (sustituye el bucle putpixel píxel a píxel)
+            inicio_gradiente = int(H * 0.40)
+            alphas = np.zeros(H, dtype=np.uint8)
+            alphas[inicio_gradiente:] = np.linspace(0, 200, H - inicio_gradiente).astype(np.uint8)
+            grad_array = np.zeros((H, W, 4), dtype=np.uint8)
+            grad_array[:, :, 3] = alphas[:, np.newaxis]
+            gradiente = Image.fromarray(grad_array, "RGBA")
 
             foto_rgba = foto.convert("RGBA")
             foto_rgba.paste(gradiente, (0, 0), gradiente)
             img = foto_rgba.convert("RGB")
-
         except Exception as e:
-            # Log detallado para diagnosticar en Sliplane
-            print(f"[ERROR slide_portada] No se pudo cargar la imagen de portada.", file=sys.stderr)
-            print(f"  URL: {img_url}", file=sys.stderr)
-            print(f"  Motivo: {e}", file=sys.stderr)
-            print(f"  Se usará fondo degradado de fallback.", file=sys.stderr)
-
-            # Fallback: degradado oscuro en vez de negro puro
-            img = Image.new("RGB", (W, H), "#1a1a2e")
-            draw_fb = ImageDraw.Draw(img)
-            # Barra roja decorativa en la parte superior como elemento visual
-            draw_fb.rectangle([0, 0, W, 8], fill=ROJO)
+            print(f"Error imagen: {e}", file=sys.stderr)
 
     draw = ImageDraw.Draw(img)
 
     fc = fuente(38)
     cat_w = int(draw.textlength(categoria.upper(), font=fc)) + 30
-    draw.rectangle([60, 900, 60 + cat_w, 950], fill=ROJO)
+    draw.rectangle([60, 900, 60+cat_w, 950], fill=ROJO)
     draw.text((75, 906), categoria.upper(), font=fc, fill=BLANCO)
 
     draw.rectangle([60, 973, 130, 978], fill=ROJO)
-
     ft = fuente(56)
-    lineas = wrap(titulo, ft, draw, W - 130)
+    lineas = wrap(titulo, ft, draw, W-130)
     y = 990
     for l in lineas[:4]:
         draw.text((60, y), l, font=ft, fill=BLANCO)
@@ -132,22 +87,20 @@ def slide_portada(titulo, categoria, img_url, num, total):
     pie(draw, num, total)
     return img
 
-
 def slide_contenido(subtitulo, cuerpo, num, total):
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
 
     draw.rectangle([60, 380, 130, 386], fill=ROJO)
-
     fs = fuente(62)
-    lineas_sub = wrap(subtitulo, fs, draw, W - 120)
+    lineas_sub = wrap(subtitulo, fs, draw, W-120)
     y = 406
     for l in lineas_sub[:2]:
         draw.text((60, y), l, font=fs, fill=BLANCO)
         y += 76
 
     fb = fuente_normal(46)
-    lineas_b = wrap(cuerpo, fb, draw, W - 120)
+    lineas_b = wrap(cuerpo, fb, draw, W-120)
     y += 20
     for l in lineas_b:
         draw.text((60, y), l, font=fb, fill=GRIS)
@@ -156,7 +109,6 @@ def slide_contenido(subtitulo, cuerpo, num, total):
     pie(draw, num, total)
     return img
 
-
 def slide_cta(url, num, total):
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
@@ -164,43 +116,41 @@ def slide_cta(url, num, total):
     f = fuente(58)
     t1, t2 = "Lee la informacion completa", "en El Quebradero"
     w1, w2 = draw.textlength(t1, font=f), draw.textlength(t2, font=f)
-    draw.text(((W - w1) // 2, 530), t1, font=f, fill=BLANCO)
-    draw.text(((W - w2) // 2, 606), t2, font=f, fill=BLANCO)
+    draw.text(((W-w1)//2, 530), t1, font=f, fill=BLANCO)
+    draw.text(((W-w2)//2, 606), t2, font=f, fill=BLANCO)
 
     fu = fuente(50)
     wu = draw.textlength(url, font=fu)
-    draw.text(((W - wu) // 2, 730), url, font=fu, fill=ROJO)
+    draw.text(((W-wu)//2, 730), url, font=fu, fill=ROJO)
 
     pie(draw, num, total)
     return img
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-
 data       = json.loads(sys.argv[1])
 titulo     = data["titulo"]
 categoria  = data.get("categoria", "SEVILLA")
-img_url    = data.get("imagen_url") or ""   # convierte None/False/"" a ""
+img_url    = data.get("imagen_url", "")
 url        = data.get("url", "elquebradero.com")
 slides_data = data["slides"]
-total       = len(slides_data) + 2
-output_dir  = data.get("output_dir", "/app/output")
-
+total      = len(slides_data) + 2
+output_dir = data.get("output_dir", "/app/output")
 os.makedirs(output_dir, exist_ok=True)
+
 rutas = []
 
-s    = slide_portada(titulo, categoria, img_url, 1, total)
+s = slide_portada(titulo, categoria, img_url, 1, total)
 ruta = f"{output_dir}/slide_01.jpg"
 s.save(ruta, "JPEG", quality=95)
 rutas.append(ruta)
 
 for i, slide in enumerate(slides_data):
-    s    = slide_contenido(slide["subtitulo"], slide["cuerpo"], i + 2, total)
+    s = slide_contenido(slide["subtitulo"], slide["cuerpo"], i+2, total)
     ruta = f"{output_dir}/slide_{str(i+2).zfill(2)}.jpg"
     s.save(ruta, "JPEG", quality=95)
     rutas.append(ruta)
 
-s    = slide_cta(url, total, total)
+s = slide_cta(url, total, total)
 ruta = f"{output_dir}/slide_{str(total).zfill(2)}.jpg"
 s.save(ruta, "JPEG", quality=95)
 rutas.append(ruta)

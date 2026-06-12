@@ -1,5 +1,4 @@
 import json, sys, os, requests
-import numpy as np
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -55,13 +54,14 @@ def slide_portada(titulo, categoria, img_url, num, total):
             x, y = (nw-W)//2, (nh-H)//2
             foto = foto.crop((x, y, x+W, y+H))
 
-            # Gradiente vectorizado con numpy (sustituye el bucle putpixel píxel a píxel)
+            # Gradiente con líneas horizontales (sin numpy, mucho más rápido que putpixel)
             inicio_gradiente = int(H * 0.40)
-            alphas = np.zeros(H, dtype=np.uint8)
-            alphas[inicio_gradiente:] = np.linspace(0, 200, H - inicio_gradiente).astype(np.uint8)
-            grad_array = np.zeros((H, W, 4), dtype=np.uint8)
-            grad_array[:, :, 3] = alphas[:, np.newaxis]
-            gradiente = Image.fromarray(grad_array, "RGBA")
+            gradiente = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            draw_grad = ImageDraw.Draw(gradiente)
+            for fila in range(inicio_gradiente, H):
+                progreso = (fila - inicio_gradiente) / (H - inicio_gradiente)
+                alpha = int(progreso * 200)
+                draw_grad.line([(0, fila), (W, fila)], fill=(0, 0, 0, alpha))
 
             foto_rgba = foto.convert("RGBA")
             foto_rgba.paste(gradiente, (0, 0), gradiente)
@@ -127,14 +127,14 @@ def slide_cta(url, num, total):
     return img
 
 
-data       = json.loads(sys.argv[1])
-titulo     = data["titulo"]
-categoria  = data.get("categoria", "SEVILLA")
-img_url    = data.get("imagen_url", "")
-url        = data.get("url", "elquebradero.com")
+data        = json.loads(sys.argv[1])
+titulo      = data["titulo"]
+categoria   = data.get("categoria", "SEVILLA")
+img_url     = data.get("imagen_url", "")
+url         = data.get("url", "elquebradero.com")
 slides_data = data["slides"]
-total      = len(slides_data) + 2
-output_dir = data.get("output_dir", "/app/output")
+total       = len(slides_data) + 2
+output_dir  = data.get("output_dir", "/app/output")
 os.makedirs(output_dir, exist_ok=True)
 
 rutas = []

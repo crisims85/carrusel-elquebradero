@@ -13,6 +13,10 @@ GRIS_OSCURO = "#333333"
 FONT_BOLD = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 FONT_REG  = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
 
+# Márgenes
+M = 120        # margen lateral izquierdo y derecho
+MAX_W = W - (M * 2)  # ancho máximo del texto: 1080 - 240 = 840px
+
 def fuente(size):
     try: return ImageFont.truetype(FONT_BOLD, size)
     except: return ImageFont.load_default()
@@ -35,11 +39,11 @@ def wrap(texto, f, draw, max_w):
 
 def pie(draw, num_slide, total):
     y = H - 90
-    draw.rectangle([60, y, W-60, y+1], fill=GRIS_OSCURO)
+    draw.rectangle([M, y, W-M, y+1], fill=GRIS_OSCURO)
     f = fuente(32)
-    draw.text((60, y+14), "EL ", font=f, fill=BLANCO)
+    draw.text((M, y+14), "EL ", font=f, fill=BLANCO)
     ancho_el = draw.textlength("EL ", font=f)
-    draw.text((60+ancho_el, y+14), "QUEBRADERO", font=f, fill=ROJO)
+    draw.text((M+ancho_el, y+14), "QUEBRADERO", font=f, fill=ROJO)
 
 def slide_portada(titulo, categoria, img_url, num, total):
     img = Image.new("RGB", (W, H), BG)
@@ -54,7 +58,7 @@ def slide_portada(titulo, categoria, img_url, num, total):
             x, y = (nw-W)//2, (nh-H)//2
             foto = foto.crop((x, y, x+W, y+H))
 
-            # Gradiente con líneas horizontales (sin numpy, mucho más rápido que putpixel)
+            # Gradiente con líneas horizontales (sin numpy)
             inicio_gradiente = int(H * 0.40)
             gradiente = Image.new("RGBA", (W, H), (0, 0, 0, 0))
             draw_grad = ImageDraw.Draw(gradiente)
@@ -71,17 +75,18 @@ def slide_portada(titulo, categoria, img_url, num, total):
 
     draw = ImageDraw.Draw(img)
 
+    # Portada: usamos margen M también para consistencia
     fc = fuente(38)
     cat_w = int(draw.textlength(categoria.upper(), font=fc)) + 30
-    draw.rectangle([60, 900, 60+cat_w, 950], fill=ROJO)
-    draw.text((75, 906), categoria.upper(), font=fc, fill=BLANCO)
+    draw.rectangle([M, 900, M+cat_w, 950], fill=ROJO)
+    draw.text((M+15, 906), categoria.upper(), font=fc, fill=BLANCO)
 
-    draw.rectangle([60, 973, 130, 978], fill=ROJO)
+    draw.rectangle([M, 973, M+70, 978], fill=ROJO)
     ft = fuente(56)
-    lineas = wrap(titulo, ft, draw, W-130)
+    lineas = wrap(titulo, ft, draw, MAX_W)
     y = 990
     for l in lineas[:4]:
-        draw.text((60, y), l, font=ft, fill=BLANCO)
+        draw.text((M, y), l, font=ft, fill=BLANCO)
         y += 68
 
     pie(draw, num, total)
@@ -91,19 +96,19 @@ def slide_contenido(subtitulo, cuerpo, num, total):
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
 
-    draw.rectangle([60, 380, 130, 386], fill=ROJO)
+    draw.rectangle([M, 380, M+70, 386], fill=ROJO)
     fs = fuente(62)
-    lineas_sub = wrap(subtitulo, fs, draw, W-120)
+    lineas_sub = wrap(subtitulo, fs, draw, MAX_W)
     y = 406
     for l in lineas_sub[:2]:
-        draw.text((60, y), l, font=fs, fill=BLANCO)
+        draw.text((M, y), l, font=fs, fill=BLANCO)
         y += 76
 
     fb = fuente_normal(46)
-    lineas_b = wrap(cuerpo, fb, draw, W-120)
+    lineas_b = wrap(cuerpo, fb, draw, MAX_W)
     y += 20
     for l in lineas_b:
-        draw.text((60, y), l, font=fb, fill=GRIS)
+        draw.text((M, y), l, font=fb, fill=GRIS)
         y += 62
 
     pie(draw, num, total)

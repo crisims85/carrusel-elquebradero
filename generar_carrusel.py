@@ -1,6 +1,7 @@
-import json, sys, os, requests
+import json, sys, os, time, requests
 
 from PIL import Image, ImageDraw, ImageFont
+from io import BytesIO
 
 W, H = 1080, 1350
 
@@ -16,6 +17,12 @@ FONT_REG  = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
 # Márgenes
 M = 120        # margen lateral izquierdo y derecho
 MAX_W = W - (M * 2)  # ancho máximo del texto: 1080 - 240 = 840px
+
+def error_fatal(motivo):
+    """Aborta el servicio reportando el motivo en stderr y en stdout (JSON) con exit 2."""
+    print(motivo, file=sys.stderr)
+    print(json.dumps({"error": "PORTADA_SIN_IMAGEN", "motivo": motivo}))
+    sys.exit(2)
 
 def fuente(size):
     try: return ImageFont.truetype(FONT_BOLD, size)
@@ -45,37 +52,66 @@ def pie(draw, num_slide, total):
     ancho_el = draw.textlength("EL ", font=f)
     draw.text((M+ancho_el, y+14), "QUEBRADERO", font=f, fill=ROJO)
 
-def slide_portada(titulo, categoria, img_url, num, total):
-    img = Image.new("RGB", (W, H), BG)
-    if img_url:
+def url_valida(u):
+    """True solo si img_url es una URL http(s) real. Rechaza '', 'false', 'null', etc."""
+    if not u or not isinstance(u, str):
+        return False
+    u = u.strip()
+    if u.lower() in ("false", "null", "none", "undefined", ""):
+        return False
+    return u.startswith("http://") or u.startswith("https://")
+
+def descargar_foto(img_url, intentos=3):
+    """Descarga la imagen con reintentos. Devuelve (Image, None) o (None, motivo_error)."""
+    ultimo_error = None
+    for n in range(intentos):
         try:
-            r = requests.get(img_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-            from io import BytesIO
+            r = requests.get(img_url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+            r.raise_for_status()  # lanza error si el status no es 2xx (404, 500, etc.)
             foto = Image.open(BytesIO(r.content)).convert("RGB")
-            ratio = max(W/foto.width, H/foto.height)
-            nw, nh = int(foto.width*ratio), int(foto.height*ratio)
-            foto = foto.resize((nw, nh), Image.LANCZOS)
-            x, y = (nw-W)//2, (nh-H)//2
-            foto = foto.crop((x, y, x+W, y+H))
-
-            # Gradiente con líneas horizontales (sin numpy)
-            inicio_gradiente = int(H * 0.40)
-            gradiente = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-            draw_grad = ImageDraw.Draw(gradiente)
-            for fila in range(inicio_gradiente, H):
-                progreso = (fila - inicio_gradiente) / (H - inicio_gradiente)
-                alpha = int(progreso * 200)
-                draw_grad.line([(0, fila), (W, fila)], fill=(0, 0, 0, alpha))
-
-            foto_rgba = foto.convert("RGBA")
-            foto_rgba.paste(gradiente, (0, 0), gradiente)
-            img = foto_rgba.convert("RGB")
+            return foto, None
         except Exception as e:
-            print(f"Error imagen: {e}", file=sys.stderr)
+            ultimo_error = e
+            print(f"Intento {n+1}/{intentos} fallido al descargar imagen: {e}", file=sys.stderr)
+            if n < intentos - 1:
+                time.sleep(2)  # espera 2s antes de reintentar
+    return None, f"No se pudo descargar la imagen tras {intentos} intentos: {ultimo_error}"
 
+def slide_portada(titulo, categoria, img_url, num, total):
+    # 1. Validar que hay URL de imagen antes de nada
+    if not url_valida(img_url):
+        error_fatal(f"Falta la imagen de portada o la URL no es valida (recibido: '{img_url}')")
+
+    # 2. Descargar la imagen (con reintentos). Si falla, abortar reportando el motivo.
+    foto, err = descargar_foto(img_url)
+    if foto is None:
+        error_fatal(f"Falta la imagen de portada: {err}")
+
+    # 3. Procesar la imagen: recorte a 1080x1350 + degradado oscuro inferior
+    try:
+        ratio = max(W/foto.width, H/foto.height)
+        nw, nh = int(foto.width*ratio), int(foto.height*ratio)
+        foto = foto.resize((nw, nh), Image.LANCZOS)
+        x, y = (nw-W)//2, (nh-H)//2
+        foto = foto.crop((x, y, x+W, y+H))
+
+        inicio_gradiente = int(H * 0.40)
+        gradiente = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        draw_grad = ImageDraw.Draw(gradiente)
+        for fila in range(inicio_gradiente, H):
+            progreso = (fila - inicio_gradiente) / (H - inicio_gradiente)
+            alpha = int(progreso * 200)
+            draw_grad.line([(0, fila), (W, fila)], fill=(0, 0, 0, alpha))
+
+        foto_rgba = foto.convert("RGBA")
+        foto_rgba.paste(gradiente, (0, 0), gradiente)
+        img = foto_rgba.convert("RGB")
+    except Exception as e:
+        error_fatal(f"Falta la imagen de portada: la imagen se descargo pero no se pudo procesar: {e}")
+
+    # 4. Dibujar textos sobre la imagen
     draw = ImageDraw.Draw(img)
 
-    # Portada: usamos margen M también para consistencia
     fc = fuente(38)
     cat_w = int(draw.textlength(categoria.upper(), font=fc)) + 30
     draw.rectangle([M, 900, M+cat_w, 950], fill=ROJO)
@@ -144,6 +180,9 @@ os.makedirs(output_dir, exist_ok=True)
 
 rutas = []
 
+# La portada se genera PRIMERO. Si no hay imagen valida, slide_portada aborta
+# con exit(2) y el resto del script (slides de contenido y CTA) no se ejecuta:
+# no se crea ninguna imagen y no se gasta nada de procesamiento.
 s = slide_portada(titulo, categoria, img_url, 1, total)
 ruta = f"{output_dir}/slide_01.jpg"
 s.save(ruta, "JPEG", quality=95)
